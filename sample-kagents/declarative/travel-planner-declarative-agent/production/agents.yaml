@@ -1,0 +1,117 @@
+apiVersion: kagent.dev/v1alpha2
+kind: Agent
+metadata:
+  name: destination-research
+  namespace: akshit-madan
+spec:
+  description: Recommends destinations from the place catalog and returns place_id values.
+  type: Declarative
+  declarative:
+    runtime: go
+    modelConfig: travel-planner-gemini
+    stream: true
+    systemMessageFrom:
+      type: ConfigMap
+      name: travel-planner-prompts
+      key: destination
+    tools:
+      - type: McpServer
+        mcpServer:
+          apiGroup: kagent.dev
+          kind: MCPServer
+          name: place-catalog
+          toolNames:
+            - search_destinations
+      - type: McpServer
+        mcpServer:
+          apiGroup: kagent.dev
+          kind: RemoteMCPServer
+          name: tavily
+          toolNames:
+            - tavily_search
+---
+apiVersion: kagent.dev/v1alpha2
+kind: Agent
+metadata:
+  name: itinerary-planning
+  namespace: akshit-madan
+spec:
+  description: Builds a day-by-day plan for one chosen destination.
+  type: Declarative
+  declarative:
+    runtime: go
+    modelConfig: travel-planner-gemini
+    stream: true
+    systemMessageFrom:
+      type: ConfigMap
+      name: travel-planner-prompts
+      key: itinerary
+    tools:
+      - type: McpServer
+        mcpServer:
+          apiGroup: kagent.dev
+          kind: RemoteMCPServer
+          name: tavily
+          toolNames:
+            - tavily_search
+---
+apiVersion: kagent.dev/v1alpha2
+kind: Agent
+metadata:
+  name: budget-feasibility
+  namespace: akshit-madan
+spec:
+  description: Estimates trip cost ranges and checks them against the budget.
+  type: Declarative
+  declarative:
+    runtime: go
+    modelConfig: travel-planner-gemini
+    stream: true
+    systemMessageFrom:
+      type: ConfigMap
+      name: travel-planner-prompts
+      key: budget
+    tools:
+      - type: McpServer
+        mcpServer:
+          apiGroup: kagent.dev
+          kind: RemoteMCPServer
+          name: tavily
+          toolNames:
+            - tavily_search
+---
+apiVersion: kagent.dev/v1alpha2
+kind: Agent
+metadata:
+  name: travel-planner
+  namespace: akshit-madan
+spec:
+  description: Plans a trip by delegating to destination, itinerary, and budget specialists.
+  type: Declarative
+  declarative:
+    runtime: go
+    modelConfig: travel-planner-gemini
+    stream: true
+    systemMessageFrom:
+      type: ConfigMap
+      name: travel-planner-prompts
+      key: supervisor
+    tools:
+      - type: Agent
+        isolateSessions: true
+        agent:
+          apiGroup: kagent.dev
+          kind: Agent
+          name: destination-research
+      - type: Agent
+        isolateSessions: true
+        agent:
+          apiGroup: kagent.dev
+          kind: Agent
+          name: itinerary-planning
+      - type: Agent
+        isolateSessions: true
+        agent:
+          apiGroup: kagent.dev
+          kind: Agent
+          name: budget-feasibility

@@ -1,0 +1,139 @@
+apiVersion: kagent.dev/v1alpha2
+kind: SandboxAgent
+metadata:
+  name: destination-research
+  namespace: akshit-madan
+spec:
+  description: Recommends destinations from the place catalog and returns place_id values.
+  type: Declarative
+  sandbox:
+    network:
+      allowedDomains:
+        - generativelanguage.googleapis.com
+        - mcp.tavily.com
+        - place-catalog.akshit-madan.svc.cluster.local
+  declarative:
+    runtime: go
+    modelConfig: travel-planner-gemini
+    stream: true
+    systemMessageFrom:
+      type: ConfigMap
+      name: travel-planner-prompts
+      key: destination
+    tools:
+      - type: McpServer
+        mcpServer:
+          apiGroup: kagent.dev
+          kind: MCPServer
+          name: place-catalog
+          toolNames:
+            - search_destinations
+      - type: McpServer
+        mcpServer:
+          apiGroup: kagent.dev
+          kind: RemoteMCPServer
+          name: tavily
+          toolNames:
+            - tavily_search
+---
+apiVersion: kagent.dev/v1alpha2
+kind: SandboxAgent
+metadata:
+  name: itinerary-planning
+  namespace: akshit-madan
+spec:
+  description: Builds a day-by-day plan for one chosen destination.
+  type: Declarative
+  sandbox:
+    network:
+      allowedDomains:
+        - generativelanguage.googleapis.com
+        - mcp.tavily.com
+  declarative:
+    runtime: go
+    modelConfig: travel-planner-gemini
+    stream: true
+    systemMessageFrom:
+      type: ConfigMap
+      name: travel-planner-prompts
+      key: itinerary
+    tools:
+      - type: McpServer
+        mcpServer:
+          apiGroup: kagent.dev
+          kind: RemoteMCPServer
+          name: tavily
+          toolNames:
+            - tavily_search
+---
+apiVersion: kagent.dev/v1alpha2
+kind: SandboxAgent
+metadata:
+  name: budget-feasibility
+  namespace: akshit-madan
+spec:
+  description: Estimates trip cost ranges and checks them against the budget.
+  type: Declarative
+  sandbox:
+    network:
+      allowedDomains:
+        - generativelanguage.googleapis.com
+        - mcp.tavily.com
+  declarative:
+    runtime: go
+    modelConfig: travel-planner-gemini
+    stream: true
+    systemMessageFrom:
+      type: ConfigMap
+      name: travel-planner-prompts
+      key: budget
+    tools:
+      - type: McpServer
+        mcpServer:
+          apiGroup: kagent.dev
+          kind: RemoteMCPServer
+          name: tavily
+          toolNames:
+            - tavily_search
+---
+apiVersion: kagent.dev/v1alpha2
+kind: SandboxAgent
+metadata:
+  name: travel-planner
+  namespace: akshit-madan
+spec:
+  description: Plans a trip by delegating to destination, itinerary, and budget specialists.
+  type: Declarative
+  sandbox:
+    network:
+      allowedDomains:
+        - generativelanguage.googleapis.com
+        - mcp.tavily.com
+        - place-catalog.akshit-madan.svc.cluster.local
+  declarative:
+    runtime: go
+    modelConfig: travel-planner-gemini
+    stream: true
+    systemMessageFrom:
+      type: ConfigMap
+      name: travel-planner-prompts
+      key: supervisor
+    tools:
+      - type: Agent
+        isolateSessions: true
+        agent:
+          apiGroup: kagent.dev
+          kind: SandboxAgent
+          name: destination-research
+      - type: Agent
+        isolateSessions: true
+        agent:
+          apiGroup: kagent.dev
+          kind: SandboxAgent
+          name: itinerary-planning
+      - type: Agent
+        isolateSessions: true
+        agent:
+          apiGroup: kagent.dev
+          kind: SandboxAgent
+          name: budget-feasibility

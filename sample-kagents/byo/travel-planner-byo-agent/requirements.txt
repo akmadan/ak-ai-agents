@@ -1,0 +1,7 @@
+kagent-adk>=0.10.4
+google-adk>=1.38.0,<2
+uvicorn>=0.30.0
+opentelemetry-instrumentation-fastapi>=0.52b0
+opentelemetry-instrumentation-httpx>=0.52b0
+a2a-sdk>=0.3.23,<1
+tavily-python>=0.5.0

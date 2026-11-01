@@ -1,0 +1,14 @@
+apiVersion: kagent.dev/v1alpha1
+kind: MCPServer
+metadata:
+  name: place-catalog
+  namespace: akshit-madan
+spec:
+  transportType: http
+  httpTransport:
+    targetPort: 8000
+    path: /mcp
+  deployment:
+    image: travel-place-catalog:sandbox
+    imagePullPolicy: IfNotPresent
+    port: 8000

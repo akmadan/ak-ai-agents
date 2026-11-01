@@ -1,0 +1,31 @@
+apiVersion: kagent.dev/v1alpha2
+kind: SandboxAgent
+metadata:
+  name: travel-planner
+  namespace: akshit-madan
+spec:
+  description: Plans a trip by delegating to destination, itinerary, and budget specialists.
+  type: BYO
+  sandbox:
+    network:
+      allowedDomains:
+        - generativelanguage.googleapis.com
+        - api.tavily.com
+        - kagent-controller.kagent.svc.cluster.local
+  byo:
+    deployment:
+      image: travel-planner-byo:sandbox
+      imagePullPolicy: IfNotPresent
+      env:
+        - name: GOOGLE_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: travel-planner-byo-secrets
+              key: GOOGLE_API_KEY
+        - name: TAVILY_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: travel-planner-byo-secrets
+              key: TAVILY_API_KEY
+        - name: AGENT_MODEL
+          value: gemini-2.5-flash
