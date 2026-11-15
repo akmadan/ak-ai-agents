@@ -13,6 +13,7 @@ load_dotenv(Path(__file__).resolve().parent / "travel_planner" / ".env")
 
 from fastapi import FastAPI
 from fastapi import HTTPException
+from fastapi import Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from google.adk.runners import Runner
@@ -259,6 +260,181 @@ async def stream_message(session_id: str, body: ChatRequest) -> StreamingRespons
         )
 
     return StreamingResponse(events(), media_type="text/event-stream")
+
+
+_QUERY_METHODS = {"query", "async_query", "stream_query", "async_stream_query"}
+_CREATE_SESSION_METHODS = {"create_session", "async_create_session"}
+_GET_SESSION_METHODS = {"get_session", "async_get_session"}
+_LIST_SESSION_METHODS = {"list_sessions", "async_list_sessions"}
+_DELETE_SESSION_METHODS = {"delete_session", "async_delete_session"}
+
+
+def _runtime_method(body: dict[str, Any]) -> str:
+    method = body.get("class_method") or body.get("classMethod") or "stream_query"
+    return str(method).strip()
+
+
+def _runtime_input(body: dict[str, Any]) -> dict[str, Any]:
+    payload = body.get("input")
+    return payload if isinstance(payload, dict) else {}
+
+
+def _message_text(message: Any) -> str:
+    if isinstance(message, str):
+        return message
+    if isinstance(message, dict):
+        parts = message.get("parts") or []
+        texts = [
+            part.get("text", "")
+            for part in parts
+            if isinstance(part, dict) and isinstance(part.get("text"), str)
+        ]
+        if texts:
+            return "".join(texts)
+        text = message.get("text")
+        if isinstance(text, str):
+            return text
+    return ""
+
+
+def _jsonable(value: Any) -> Any:
+    if hasattr(value, "model_dump"):
+        return value.model_dump(mode="json", exclude_none=True)
+    return value
+
+
+async def _open_runtime_session(user_id: str, session_id: Any):
+    if session_id:
+        existing = await session_service.get_session(
+            app_name=APP_NAME,
+            user_id=user_id,
+            session_id=str(session_id),
+        )
+        if existing is not None:
+            return existing
+        return await session_service.create_session(
+            app_name=APP_NAME,
+            user_id=user_id,
+            session_id=str(session_id),
+        )
+    return await session_service.create_session(app_name=APP_NAME, user_id=user_id)
+
+
+async def _runtime_events(payload: dict[str, Any]) -> AsyncIterator[Any]:
+    text = _message_text(payload.get("message")).strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="message is required")
+    user_id = str(payload.get("user_id") or DEFAULT_USER).strip() or DEFAULT_USER
+    session = await _open_runtime_session(user_id, payload.get("session_id"))
+    content = types.Content(role="user", parts=[types.Part(text=text)])
+    async for event in runner.run_async(
+        user_id=user_id,
+        session_id=session.id,
+        new_message=content,
+    ):
+        yield event
+
+
+async def _runtime_call(method: str, payload: dict[str, Any]) -> Any:
+    user_id = str(payload.get("user_id") or DEFAULT_USER).strip() or DEFAULT_USER
+    if method in _CREATE_SESSION_METHODS:
+        session = await session_service.create_session(
+            app_name=APP_NAME,
+            user_id=user_id,
+            session_id=str(payload["session_id"]) if payload.get("session_id") else None,
+            state=payload.get("state") if isinstance(payload.get("state"), dict) else None,
+        )
+        return _jsonable(session)
+    if method in _GET_SESSION_METHODS:
+        session_id = payload.get("session_id")
+        if not session_id:
+            raise HTTPException(status_code=400, detail="session_id is required")
+        session = await session_service.get_session(
+            app_name=APP_NAME,
+            user_id=user_id,
+            session_id=str(session_id),
+        )
+        if session is None:
+            raise HTTPException(status_code=404, detail="Session not found")
+        return _jsonable(session)
+    if method in _LIST_SESSION_METHODS:
+        listed = await session_service.list_sessions(app_name=APP_NAME, user_id=user_id)
+        return _jsonable(listed)
+    if method in _DELETE_SESSION_METHODS:
+        session_id = payload.get("session_id")
+        if not session_id:
+            raise HTTPException(status_code=400, detail="session_id is required")
+        await session_service.delete_session(
+            app_name=APP_NAME,
+            user_id=user_id,
+            session_id=str(session_id),
+        )
+        return {"session_id": str(session_id), "deleted": True}
+    if method in _QUERY_METHODS:
+        reply = ""
+        async for event in _runtime_events(payload):
+            author = getattr(event, "author", "")
+            text = _event_text(event)
+            if author == ROOT_AGENT and text and event.is_final_response():
+                reply = text
+        return reply
+    raise HTTPException(status_code=400, detail=f"Unsupported class method: {method}")
+
+
+async def _load_runtime_body(request: Request) -> dict[str, Any]:
+    """Agent Runtime forwards the query body as a JSON string, not an object."""
+    raw = await request.body()
+    if not raw:
+        raise HTTPException(status_code=400, detail="Request body is required")
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail="Request body must be JSON") from exc
+    if isinstance(parsed, str):
+        try:
+            parsed = json.loads(parsed)
+        except json.JSONDecodeError as exc:
+            raise HTTPException(
+                status_code=400, detail="Request body must be a JSON object"
+            ) from exc
+    if not isinstance(parsed, dict):
+        raise HTTPException(status_code=400, detail="Request body must be a JSON object")
+    return parsed
+
+
+@app.post("/api/reasoning_engine")
+async def reasoning_engine(request: Request) -> dict[str, Any]:
+    body = await _load_runtime_body(request)
+    method = _runtime_method(body)
+    logger.info("runtime query method=%s", method)
+    reply = await _runtime_call(method, _runtime_input(body))
+    return {"output": reply, "response": reply}
+
+
+@app.post("/api/stream_reasoning_engine")
+async def stream_reasoning_engine(request: Request) -> StreamingResponse:
+    body = await _load_runtime_body(request)
+    method = _runtime_method(body)
+    payload = _runtime_input(body)
+    logger.info("runtime stream method=%s", method)
+
+    async def lines() -> AsyncIterator[str]:
+        try:
+            if method in _QUERY_METHODS:
+                async for event in _runtime_events(payload):
+                    yield json.dumps({"output": _jsonable(event)}) + "\n"
+                return
+            yield json.dumps({"output": await _runtime_call(method, payload)}) + "\n"
+        except HTTPException as exc:
+            detail = exc.detail if isinstance(exc.detail, str) else "Request failed"
+            yield json.dumps({"output": {"error": detail}}) + "\n"
+        except Exception:
+            logger.exception("runtime stream failed")
+            yield json.dumps(
+                {"output": {"error": "The travel planner could not complete this turn."}}
+            ) + "\n"
+
+    return StreamingResponse(lines(), media_type="application/x-ndjson")
 
 
 if __name__ == "__main__":
