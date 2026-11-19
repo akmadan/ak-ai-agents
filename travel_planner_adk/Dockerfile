@@ -14,7 +14,7 @@ WORKDIR /app
 COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev --no-install-project
 
-COPY server.py ./
+COPY server.py mcp_server.py a2a_app.py ./
 COPY travel_planner ./travel_planner
 
 ENV PATH="/app/.venv/bin:$PATH"
