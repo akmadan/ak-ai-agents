@@ -1,4 +1,5 @@
 .venv/
 .env
+.agentcore-auth.local
 __pycache__/
 .adk/

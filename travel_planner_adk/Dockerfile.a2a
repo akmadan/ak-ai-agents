@@ -1,0 +1,28 @@
+FROM python:3.12-slim
+
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy \
+    GOOGLE_GENAI_USE_VERTEXAI=FALSE \
+    A2A_BIND_HOST=0.0.0.0 \
+    A2A_PORT=9000
+
+WORKDIR /app
+
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-dev --no-install-project
+
+COPY a2a_app.py ./
+COPY travel_planner ./travel_planner
+
+ENV PATH="/app/.venv/bin:$PATH"
+
+# AgentCore Runtime expects A2A on 0.0.0.0:9000/ with the card at /.well-known/agent-card.json.
+# Build for ARM64: docker buildx build --platform linux/arm64 -f Dockerfile.a2a ...
+# Keys are not baked in. Set GOOGLE_API_KEY and TAVILY_API_KEY at run time.
+EXPOSE 9000
+
+CMD ["python", "a2a_app.py"]
